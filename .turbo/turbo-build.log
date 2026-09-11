@@ -1,4 +1,0 @@
-
-> @openplan/dsh-plugin@0.1.0 build /Users/vncsleal/Code/openplan/apps/dsh/plugin
-> tsc -p tsconfig.build.json
-
