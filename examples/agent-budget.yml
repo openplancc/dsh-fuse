@@ -1,0 +1,77 @@
+# Exemplo: agente no CI com teto de custo (plugin dsh)
+#
+# Roda o harness com o plugin dsh no pipeline: o fuse local corta a sessão antes
+# de estourar o budget e o sync reporta os cortes pro painel. Troque os segredos
+# por variáveis do repositório (nunca commite a org key).
+#
+# Requisitos: o modelo default do runner configurado para o harness. O passo de
+# instalação usa o tarball (`pnpm pack`), que funciona sem depender de publicação
+# em registry.
+name: agent-budget
+
+on:
+  pull_request:
+
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install harness + plugin
+        run: |
+          npm install -g @deepseek-ai/dsh pnpm
+          pnpm pack --pack-destination "$RUNNER_TEMP"
+          dsh plugin --profile ci add "$RUNNER_TEMP"/openplan-dsh-plugin-*.tgz
+
+      # O profile 'ci' é inicializado só com @deepseek-ai/dsh-base; o app
+      # headless é o bundle que de fato roda a tarefa. Remova este passo se o
+      # seu profile já o inclui.
+      - name: Compose the headless app into the profile
+        run: |
+          node -e '
+            const fs = require("fs");
+            const p = process.env.HOME + "/.dsh/profiles/ci/package.json";
+            const m = JSON.parse(fs.readFileSync(p, "utf8"));
+            const b = m.dsh.profile.bundles;
+            if (!b.includes("@deepseek-ai/dsh-headless")) {
+              b.push("@deepseek-ai/dsh-headless");
+              fs.writeFileSync(p, JSON.stringify(m, null, 2) + "\n");
+            }
+          '
+
+      # A sobrescrita é uma linha DIRETA com o mesmo id do bundle. Um segundo
+      # `insert:` duplicaria o id e o loader falharia com
+      # "duplicate loader entry id".
+      - name: Configure the cost policy
+        env:
+          DSH_ORG_KEY: ${{ secrets.DSH_ORG_KEY }}
+        run: |
+          cat > "$HOME/.dsh/profiles/ci/cordis.patch.yml" <<'YAML'
+          - id: dsh-cost-policy
+            name: '@openplan/dsh-plugin'
+            config:
+              project: REPO_PLACEHOLDER
+              dev: ci@github-actions
+              storeUrl: file:/tmp/dsh-ci.db
+              budgets:
+                - limitUsd: 2
+                  window: day
+              policies:
+                maxReasoningEffort: medium
+              baseUrl: https://dsh-api.openplan.cc
+              orgKey: !!js process.env.DSH_ORG_KEY
+          YAML
+
+      - name: Run the agent under the cost policy
+        run: |
+          dsh --profile ci "Revise este PR: ${{ github.event.pull_request.html_url }}"
+        # O fuse corta assim que o orçamento diário estoura — o 429 do painel
+        # engata o fuse local até o reset da janela. Configure os canais de
+        # alerta em dsh.openplan.cc/alertas para receber o aviso no
+        # Telegram/webhook.

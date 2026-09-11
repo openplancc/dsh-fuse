@@ -1,0 +1,4 @@
+
+> @openplan/dsh-plugin@0.1.0 typecheck /Users/vncsleal/Code/openplan/apps/dsh/plugin
+> tsc --noEmit
+

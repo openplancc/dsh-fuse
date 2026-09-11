@@ -1,0 +1,29 @@
+# The bundle layer `dsh` applies when a profile lists this package.
+#
+# Every key this row needs is restated here because a patch REPLACES a row's
+# config rather than deep-merging it. It deliberately carries no `config:` at
+# all: the exported Config schema supplies the defaults a deployment is likely
+# to keep (local-only mode, `file:local.db`, 60s sync), and users override
+# what they need in their own profile's `cordis.patch.yml`, which is applied
+# after every bundle layer.
+#
+#   dsh plugin --profile <name> add @openplan/dsh-plugin
+#   dsh --profile <name> --dump-config   # shows the "# == @openplan/dsh-plugin" layer
+#
+# Local-only mode (nothing leaves the machine) is the default. To report to a
+# panel, add to the profile patch:
+#
+#   - id: dsh-cost-policy
+#     name: '@openplan/dsh-plugin'
+#     config:
+#       project: meu-projeto
+#       dev: eu@empresa.com
+#       orgKey: !!js process.env.DSH_ORG_KEY
+#       baseUrl: https://dsh-api.openplan.cc
+#       budgets:
+#         - limitUsd: 50
+#           window: month
+#
+- insert:
+    - id: dsh-cost-policy
+      name: '@openplan/dsh-plugin'

@@ -1,0 +1,64 @@
+{
+	"name": "@openplan/dsh-plugin",
+	"version": "0.1.0",
+	"description": "Cost policy for the DeepSeek Harness: per-call metering plus a local fuse that enforces budget, model and reasoning-effort limits before any token is spent.",
+	"license": "MIT",
+	"type": "module",
+	"private": false,
+	"publishConfig": {
+		"access": "public"
+	},
+	"files": [
+		"dist",
+		"cordis.patch.yml",
+		"README.md"
+	],
+	"engines": {
+		"node": ">=20"
+	},
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"keywords": [
+		"dsh",
+		"dsh-plugin",
+		"llm",
+		"budget",
+		"cost",
+		"enforcement",
+		"cordis"
+	],
+	"scripts": {
+		"build": "tsc -p tsconfig.build.json",
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run",
+		"prepublishOnly": "pnpm build"
+	},
+	"dsh": {
+		"bundle": {
+			"patch": "./cordis.patch.yml"
+		}
+	},
+	"dependencies": {
+		"@deepseek-ai/schemastery": "3.18.2",
+		"@libsql/client": "^0.17.4"
+	},
+	"peerDependencies": {
+		"@deepseek-ai/cordis": "4.0.1"
+	},
+	"devDependencies": {
+		"@deepseek-ai/cordis": "4.0.1",
+		"@deepseek-ai/dsh-agent": "0.1.1-rc.2",
+		"@deepseek-ai/dsh-llm": "0.1.1-rc.2",
+		"@deepseek-ai/dsh-session": "0.1.1-rc.2",
+		"@deepseek-ai/dsh-tools": "0.1.1-rc.2",
+		"@types/node": "^22.0.0",
+		"typescript": "^5.9.0",
+		"vitest": "^3.1.0"
+	}
+}

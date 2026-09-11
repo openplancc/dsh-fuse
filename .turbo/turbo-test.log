@@ -1,0 +1,22 @@
+
+> @openplan/dsh-plugin@0.1.0 test /Users/vncsleal/Code/openplan/apps/dsh/plugin
+> vitest run
+
+
+ RUN  v3.2.7 /Users/vncsleal/Code/openplan/apps/dsh/plugin
+
+ ✓ tests/budget-tool.test.ts (7 tests) 9ms
+ ✓ tests/meter.test.ts (7 tests) 11ms
+ ✓ tests/pricing.test.ts (19 tests) 29ms
+ ✓ tests/sync.test.ts (12 tests) 13ms
+ ✓ tests/store.test.ts (13 tests) 63ms
+ ✓ tests/config.test.ts (12 tests) 159ms
+ ✓ tests/router.test.ts (7 tests) 2ms
+ ✓ tests/fuse.test.ts (12 tests) 3ms
+ ✓ tests/harness.test.ts (22 tests) 415ms
+
+ Test Files  9 passed (9)
+      Tests  111 passed (111)
+   Start at  11:54:38
+   Duration  1.61s (transform 797ms, setup 0ms, collect 2.07s, tests 705ms, environment 2ms, prepare 1.48s)
+
