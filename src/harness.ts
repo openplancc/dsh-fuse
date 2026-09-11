@@ -38,7 +38,12 @@ import type {
 	PreStepDecision,
 	RequestErrorAction,
 } from "@deepseek-ai/dsh-agent";
-import type { LlmCallConfig, LlmRuntime } from "@deepseek-ai/dsh-llm";
+import type {
+	LlmCallConfig,
+	LlmRuntime,
+	MessageId,
+	UserMessage,
+} from "@deepseek-ai/dsh-llm";
 import type { Session, SessionEvent } from "@deepseek-ai/dsh-session";
 import type { ToolRuntime } from "@deepseek-ai/dsh-tools";
 import {
@@ -171,6 +176,47 @@ export function apply(ctx: Context, config: DshPluginConfig): void {
 		(ctx.get?.("tokenMeter") as OptionalTokenMeter | undefined) ?? undefined;
 	const llm = (): LlmRuntime | undefined =>
 		(ctx.get?.("llm") as LlmRuntime | undefined) ?? undefined;
+
+	/**
+	 * In-session cut notices: when the fuse blocks a step, the harness ends the
+	 * turn as `{ kind: "blocked" }` with no visible explanation — the user is
+	 * told nothing. The harness's own convention for "something just happened"
+	 * is a plugin-producer `notice`-form user message (`agent.inject`), which
+	 * the client conversation renders as a collapsed one-line row expandable to
+	 * the full text. One notice per (rule, window) per process: a budget that
+	 * stays tripped must not restate itself on every blocked step, and a new
+	 * window that re-trips it should announce that again.
+	 */
+	const cutNotices = new Set<string>();
+	function notifyCut(
+		agent: Agent,
+		input: { rule: string; summary: string; detail: string },
+	): void {
+		const window = windowStart(new Date(), "day");
+		const key = `${input.rule}\u0000${window}`;
+		if (cutNotices.has(key)) return;
+		cutNotices.add(key);
+		try {
+			agent.inject({
+				id: crypto.randomUUID() as MessageId,
+				role: "user",
+				content: [{ type: "text", text: input.detail }],
+				source: {
+					kind: "plugin",
+					plugin: "@openplan/dsh-fuse",
+					form: "notice",
+					summary: input.summary,
+				},
+			} as UserMessage);
+		} catch (error) {
+			// A notice must never break the reject path — the cut already landed
+			// in the store; the UI alert is best-effort.
+			logger.warn("[dsh] cut notice not delivered", {
+				rule: input.rule,
+				error: String(error),
+			});
+		}
+	}
 
 	/**
 	 * Documented load-time rule: *"A plugin should also reject schema-valid
@@ -656,6 +702,11 @@ export function apply(ctx: Context, config: DshPluginConfig): void {
 					resetAt: remoteBlock.resetAt,
 					project,
 				});
+				notifyCut(payload.agent, {
+					rule: remoteBlock.rule,
+					summary: "fuse: chamadas bloqueadas (orçamento do painel)",
+					detail: `O painel central cortou as chamadas deste escopo (regra: ${remoteBlock.rule}). O bloqueio vale até ${remoteBlock.resetAt} — o fuse local segue ativo e nenhum token é gasto enquanto isso.`,
+				});
 				return { kind: "reject" };
 			}
 
@@ -697,6 +748,11 @@ export function apply(ctx: Context, config: DshPluginConfig): void {
 				logger.warn("[dsh] fuse blocked", {
 					rule: decision.rule,
 					project,
+				});
+				notifyCut(payload.agent, {
+					rule: decision.rule ?? "unknown",
+					summary: "fuse: chamada cortada — orçamento atingido",
+					detail: `O fuse bloqueou a chamada antes de gastar tokens (regra: ${decision.rule ?? "unknown"}). Ajuste o budget em cordis.patch.yml ou use a ferramenta dsh_budget_status para ver o status; o limite reseta no fim da janela.`,
 				});
 				return { kind: "reject" };
 			}

@@ -107,7 +107,9 @@ export function fakeSession(id: string): Session {
 	return { id } as unknown as Session;
 }
 
-/** A minimal agent handle — the plugin reads `id`, `options` and `session`. */
+/** A minimal agent handle — the plugin reads `id`, `options` and `session`.
+ * `inject` is spy-shaped: it records each notice so tests can assert the
+ * in-session cut alert without running a full conversation. */
 export function fakeAgent(
 	id: string,
 	options: { provider?: string; model?: string } = {},
@@ -116,7 +118,25 @@ export function fakeAgent(
 		id,
 		options,
 		session: fakeSession(id),
+		inject: (message: UserMessage) => {
+			const recorded = agentInjectSpies.get(id) ?? [];
+			recorded.push(message);
+			agentInjectSpies.set(id, recorded);
+		},
 	} as unknown as Agent;
+}
+
+/**
+ * Notices injected into a fake agent, keyed by agent id. Cleared by
+ * {@link clearAgentInjectSpies} between cases; the plugin's own in-process
+ * dedup (one notice per rule per window) intentionally survives that clear,
+ * so a second blocked step within the same test still produces one notice.
+ */
+export const agentInjectSpies = new Map<string, UserMessage[]>();
+
+/** Reset the recorded injections (not the plugin's dedup keys). */
+export function clearAgentInjectSpies(): void {
+	agentInjectSpies.clear();
 }
 
 /** Drive the `agent/pre-step` waterfall through the real dispatcher. */

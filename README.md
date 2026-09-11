@@ -15,12 +15,12 @@ O pacote declara `dsh.bundle`, que é o que faz `dsh plugin add` ativar a
 camada. Sem essa declaração o pnpm instalaria uma biblioteca inerte.
 
 ```bash
-# npm — a forma canônica de instalação (publicado, v0.1.0)
+# npm — a forma canônica de instalação (publicado)
 dsh plugin --profile <perfil> add @openplan/dsh-fuse
 
 # tarball (sem depender de registry)
 pnpm pack                       # gera openplan-dsh-fuse-<versão>.tgz
-dsh plugin --profile <perfil> add ./openplan-dsh-fuse-0.1.0.tgz
+dsh plugin --profile <perfil> add ./openplan-dsh-fuse-<versão>.tgz
 
 # direto do git (exige allowlist de build do pnpm >= 10 — veja a doc do harness)
 dsh plugin --profile <perfil> add github:<org>/<repo>#<sha>

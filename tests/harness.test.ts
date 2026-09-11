@@ -15,7 +15,9 @@ import { Config, type DshPluginConfig } from "../src/config.js";
 import { apply } from "../src/harness.js";
 import { createLocalStore } from "../src/store.js";
 import {
+	agentInjectSpies,
 	assistantMessageEvent,
+	clearAgentInjectSpies,
 	eventually,
 	fakeAgent,
 	fakeSession,
@@ -246,6 +248,71 @@ describe("fuse — the primary gate", () => {
 		const cuts = await store.pendingCuts();
 		expect(cuts).toHaveLength(1);
 		expect(cuts[0]?.rule).toBe("budget_exceeded");
+		await dispose();
+	});
+
+	it("injects an in-session cut notice, deduped per rule and window", async () => {
+		clearAgentInjectSpies();
+		const { ctx, dispose } = await mountPlugin({
+			storeUrl: ":memory:",
+			project: "test",
+			budgets: [{ limitUsd: 0.001, window: "day" }],
+			pricingTable: { m: { inputCentsPerM: 1e6, outputCentsPerM: 1e6 } },
+		});
+		const agent = fakeAgent("s1", { provider: "p", model: "m" });
+
+		// Two blocked steps in the same window → exactly one notice: the
+		// harness would otherwise restate the cut on every rejected step.
+		await preStep(ctx, { agent, messages: [{ role: "user", content: "a" }] });
+		await preStep(ctx, { agent, messages: [{ role: "user", content: "b" }] });
+
+		const notices = agentInjectSpies.get("s1") ?? [];
+		expect(notices).toHaveLength(1);
+		const notice = notices[0];
+		expect(notice?.role).toBe("user");
+		const source = notice?.source as {
+			kind: string;
+			form?: string;
+			summary?: string;
+		};
+		expect(source.kind).toBe("plugin");
+		expect(source.form).toBe("notice");
+		expect(source.summary).toContain("cortada");
+		await dispose();
+	});
+
+	it("injects a notice for a remote (SaaS 429) block", async () => {
+		clearAgentInjectSpies();
+		const storeUrl = tmpStore("remote-block");
+		// The plugin opens the same file store from config.storeUrl — seed the
+		// remote block through a second handle before the step runs, so the
+		// pre-step path engages the 429 branch without a live SaaS.
+		const store = createLocalStore(storeUrl);
+		await store.setRemoteBlock({
+			rule: "budget_exceeded",
+			resetAt: new Date(Date.now() + 60_000).toISOString(),
+		});
+		const { ctx, dispose } = await mountPlugin({
+			storeUrl,
+			project: "test",
+			budgets: [{ limitUsd: 100, window: "day" }],
+			pricingTable: { m: { inputCentsPerM: 1e6, outputCentsPerM: 1e6 } },
+		});
+		const agent = fakeAgent("s1", { provider: "p", model: "m" });
+		const decision = await preStep(ctx, {
+			agent,
+			messages: [{ role: "user", content: "a" }],
+		});
+		expect(decision).toEqual({ kind: "reject" });
+		const notices = agentInjectSpies.get("s1") ?? [];
+		expect(notices).toHaveLength(1);
+		const source = notices[0]?.source as {
+			kind: string;
+			form?: string;
+			summary?: string;
+		};
+		expect(source.form).toBe("notice");
+		expect(source.summary).toContain("bloqueadas");
 		await dispose();
 	});
 
