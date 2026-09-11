@@ -27,7 +27,7 @@ jobs:
         run: |
           npm install -g @deepseek-ai/dsh pnpm
           pnpm pack --pack-destination "$RUNNER_TEMP"
-          dsh plugin --profile ci add "$RUNNER_TEMP"/openplan-dsh-plugin-*.tgz
+          dsh plugin --profile ci add "$RUNNER_TEMP"/openplan-dsh-fuse-*.tgz
 
       # O profile 'ci' é inicializado só com @deepseek-ai/dsh-base; o app
       # headless é o bundle que de fato roda a tarefa. Remova este passo se o
@@ -53,8 +53,8 @@ jobs:
           DSH_ORG_KEY: ${{ secrets.DSH_ORG_KEY }}
         run: |
           cat > "$HOME/.dsh/profiles/ci/cordis.patch.yml" <<'YAML'
-          - id: dsh-cost-policy
-            name: '@openplan/dsh-plugin'
+          - id: fuse
+            name: '@openplan/dsh-fuse'
             config:
               project: REPO_PLACEHOLDER
               dev: ci@github-actions

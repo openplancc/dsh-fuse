@@ -1,6 +1,7 @@
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createLocalStore } from "../src/store.js";
+import { createLocalStore, defaultStoreUrl, dshHome } from "../src/store.js";
 
 // :memory: libsql — no native build, no files on disk (proposal §1).
 const store = () => createLocalStore(":memory:");
@@ -221,6 +222,66 @@ describe("local store — fidelity columns and in-place upgrade", () => {
 		]);
 		await db.setRemotePolicy(null);
 		expect(await db.remotePolicy()).toBeNull();
+	});
+
+	/**
+	 * The default store is anchored to the harness home, never the CWD — a
+	 * relative default silently splits spend across one empty ledger per launch
+	 * directory (the bug this suite guards).
+	 */
+	describe("store default location", () => {
+		it("resolves the dsh home from $DSH_HOME and falls back to ~/.dsh", () => {
+			const previous = process.env.DSH_HOME;
+			try {
+				delete process.env.DSH_HOME;
+				expect(dshHome()).toBe(join(homedir(), ".dsh"));
+				process.env.DSH_HOME = "/tmp/custom-dsh-home";
+				expect(dshHome()).toBe("/tmp/custom-dsh-home");
+			} finally {
+				if (previous === undefined) delete process.env.DSH_HOME;
+				else process.env.DSH_HOME = previous;
+			}
+		});
+
+		it("defaults the store URL to $DSH_HOME/dsh-fuse/local.db", () => {
+			const previous = process.env.DSH_HOME;
+			try {
+				process.env.DSH_HOME = "/tmp/dsh-home-store-test";
+				expect(defaultStoreUrl()).toBe(
+					"file:/tmp/dsh-home-store-test/dsh-fuse/local.db",
+				);
+			} finally {
+				if (previous === undefined) delete process.env.DSH_HOME;
+				else process.env.DSH_HOME = previous;
+			}
+		});
+
+		it("creates the parent directory of the default store on demand", async () => {
+			const previous = process.env.DSH_HOME;
+			const home = join(tmpdir(), `dsh-store-${Date.now()}`);
+			try {
+				process.env.DSH_HOME = home;
+				const db = createLocalStore();
+				await db.record({
+					project: "default-location",
+					costUsd: 0.01,
+					at: "2026-09-01T12:00:00Z",
+				});
+				await db.close();
+				const spent = await createLocalStore().spentForWindow({
+					project: "default-location",
+					since: "2026-09-01T00:00:00Z",
+				});
+				expect(spent).toBeCloseTo(0.01, 8);
+				const file = join(home, "dsh-fuse", "local.db");
+				expect(await import("node:fs").then((fs) => fs.existsSync(file))).toBe(
+					true,
+				);
+			} finally {
+				if (previous === undefined) delete process.env.DSH_HOME;
+				else process.env.DSH_HOME = previous;
+			}
+		});
 	});
 
 	it("upgrades a database written by the previous schema without losing spend", async () => {

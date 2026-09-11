@@ -92,7 +92,7 @@ export async function mountPlugin(
 	// schema — exactly what the loader does for a `cordis.yml` row. Resolving
 	// the config here instead would hide the very failure the smoke profile
 	// caught: a plugin shape where the loader cannot find `Config`.
-	const fiber = ctx.plugin({ name: "dsh-cost-policy", apply, Config }, raw);
+	const fiber = ctx.plugin({ name: "fuse", apply, Config }, raw);
 	await fiber;
 	return {
 		ctx,

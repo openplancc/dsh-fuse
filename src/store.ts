@@ -22,6 +22,9 @@
  * being discarded.
  */
 
+import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { type Client, createClient } from "@libsql/client";
 
 export interface StoredUsage {
@@ -222,8 +225,43 @@ async function migrate(client: Client): Promise<void> {
 	]);
 }
 
-/** `url`: file path for the installed plugin, `:memory:` for tests. */
-export function createLocalStore(url = "file:local.db"): LocalStore {
+/**
+ * Resolve the DSH home (harness root) the same way the harness itself does:
+ * `$DSH_HOME` when set and non-blank, else `~/.dsh`. The default store path is
+ * anchored here so the ledger is stable regardless of the working directory
+ * the harness happened to be started from — a CWD-relative default silently
+ * split spend across one empty ledger per launch directory.
+ */
+export function dshHome(): string {
+	const override = process.env.DSH_HOME?.trim();
+	return override ? override : join(homedir(), ".dsh");
+}
+
+/**
+ * The default store location: `$DSH_HOME/dsh-fuse/local.db` (or the
+ * equivalent under `~/.dsh`). The parent directory is created on demand by
+ * {@link createLocalStore}, so a fresh harness home needs no manual setup.
+ */
+export function defaultStoreUrl(): string {
+	return `file:${join(dshHome(), "dsh-fuse", "local.db")}`;
+}
+
+/** Ensure the parent directory of a `file:` store URL exists (libsql does not
+ * create missing directories). A `:memory:` or remote URL is untouched.
+ */
+function ensureStoreParentDir(url: string): void {
+	const filePath = url.startsWith("file:") ? url.slice("file:".length) : "";
+	if (!filePath) return;
+	const parent = dirname(filePath);
+	if (parent && parent !== ".") mkdirSync(parent, { recursive: true });
+}
+
+/** `url`: file path for the installed plugin, `:memory:` for tests. A relative
+ * `file:` path is only honored when explicitly configured — the default is
+ * the harness-home-anchored {@link defaultStoreUrl}, never the CWD.
+ */
+export function createLocalStore(url = defaultStoreUrl()): LocalStore {
+	ensureStoreParentDir(url);
 	const client: Client = createClient({ url });
 	const ready = migrate(client);
 

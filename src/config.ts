@@ -50,7 +50,12 @@ export interface PolicyConfig {
 }
 
 export interface DshPluginConfig {
-	/** libsql URL — a file for the installed plugin, `:memory:` for tests. */
+	/**
+	 * libsql URL — a file for the installed plugin, `:memory:` for tests.
+	 * Empty means the harness-home-anchored default
+	 * (`$DSH_HOME/dsh-fuse/local.db`, `~/.dsh` when `$DSH_HOME` is
+	 * unset); a relative `file:` path is honored only when explicitly set.
+	 */
 	storeUrl: string;
 	/** Project label for windowing. */
 	project: string;
@@ -137,7 +142,10 @@ export const Config: Schema<
 	Partial<DshPluginConfig>,
 	DshPluginConfig
 > = Schema.object({
-	storeUrl: Schema.string().default("file:local.db"),
+	// Empty storeUrl means "the harness-home-anchored default store"
+	// (store.ts) — a stable ledger that does not wander with the CWD the
+	// harness was started from.
+	storeUrl: Schema.string().default(""),
 	project: Schema.string().default("default"),
 	dev: Schema.string().default("unknown"),
 	budgets: Schema.array(

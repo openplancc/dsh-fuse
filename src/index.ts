@@ -1,5 +1,5 @@
 /**
- * The dsh plugin — metering ≡ enforcement for local coding agents.
+ * The dsh fuse — metering ≡ enforcement for local coding agents.
  *
  * A free plugin for the DeepSeek Harness that exports per-call telemetry
  * (metrics only: model, tokens, cost — never content) and enforces the org's
@@ -20,10 +20,11 @@
  *
  * Without `baseUrl`/`orgKey` nothing ever leaves the machine: the fuse
  * enforces the configured budgets and policies entirely offline, and the
- * local libsql store (`file:local.db` by default) is the spend source.
+ * local libsql store (`$DSH_HOME/dsh-fuse/local.db` by default) is
+ * the spend source.
  */
 
-export const name = "dsh-cost-policy";
+export const name = "fuse";
 
 import { Config as PluginConfig } from "./config.js";
 import { apply as pluginApply } from "./harness.js";

@@ -14,7 +14,9 @@ function resolve(partial: Record<string, unknown>): DshPluginConfig {
 describe("Config schema", () => {
 	it("fills every default a deployment is likely to keep", () => {
 		const config = resolve({});
-		expect(config.storeUrl).toBe("file:local.db");
+		// Empty storeUrl means the harness-home-anchored default store, not a
+		// CWD-relative file (see store.ts: defaultStoreUrl).
+		expect(config.storeUrl).toBe("");
 		expect(config.project).toBe("default");
 		expect(config.dev).toBe("unknown");
 		expect(config.budgets).toEqual([]);

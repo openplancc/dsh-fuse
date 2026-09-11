@@ -616,7 +616,7 @@ describe("model-facing budget status tool", () => {
 		const double = toolsServiceDouble();
 		ctx.provide("tools", double.service);
 		const fiber = ctx.plugin(
-			{ name: "dsh-cost-policy", apply, Config },
+			{ name: "fuse", apply, Config },
 			rawConfig(storeUrl) as Partial<DshPluginConfig>,
 		);
 		await fiber;
@@ -651,7 +651,7 @@ describe("model-facing budget status tool", () => {
 		} as unknown as ToolRuntime);
 		const fiber = ctx.plugin(
 			{
-				name: "dsh-cost-policy",
+				name: "fuse",
 				apply,
 				Config,
 			},

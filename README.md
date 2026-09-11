@@ -1,4 +1,4 @@
-# @openplan/dsh-plugin
+# /dsh-fuse
 
 Política de custo multi-agente para o DeepSeek Harness: o plugin mede cada
 chamada do agente, **trava antes** de estourar o budget (fuse local, <100ms,
@@ -16,17 +16,17 @@ camada. Sem essa declaração o pnpm instalaria uma biblioteca inerte.
 
 ```bash
 # npm — a forma canônica de instalação (publicado, v0.1.0)
-dsh plugin --profile <perfil> add @openplan/dsh-plugin
+dsh plugin --profile <perfil> add @openplan/dsh-fuse
 
 # tarball (sem depender de registry)
-pnpm pack                       # gera openplan-dsh-plugin-<versão>.tgz
-dsh plugin --profile <perfil> add ./openplan-dsh-plugin-0.1.0.tgz
+pnpm pack                       # gera openplan-dsh-fuse-<versão>.tgz
+dsh plugin --profile <perfil> add ./openplan-dsh-fuse-0.1.0.tgz
 
 # direto do git (exige allowlist de build do pnpm >= 10 — veja a doc do harness)
 dsh plugin --profile <perfil> add github:<org>/<repo>#<sha>
 ```
 
-Fonte: **https://github.com/openplancc/dsh-plugin** (espelho gerado a cada
+Fonte: **https://github.com/openplancc/dsh-fuse** (espelho gerado a cada
 release — cada tag `v<versão>` corresponde a um commit deste monorepo).
 
 O plugin usa `@libsql/client` como store local — zero build nativa,
@@ -35,21 +35,21 @@ distribuível sem compilação (Node ≥ 20).
 Verifique a camada sem bootar:
 
 ```bash
-dsh --profile <perfil> --dump-config   # mostra '# == @openplan/dsh-plugin'
+dsh --profile <perfil> --dump-config   # mostra '# == @openplan/dsh-fuse'
 ```
 
 ## Configurar
 
-O bundle traz defaults seguros (modo local-only, `file:local.db`, sync de 60s).
-Para sobrescrever, edite o `cordis.patch.yml` **do seu profile** — a camada do
-usuário, aplicada depois de todas as camadas de bundle. A sobrescrita é uma
-**linha direta com o mesmo `id`** (não um segundo `insert:`, que duplicaria o id
-e faria o loader falhar com `duplicate loader entry id`):
+O bundle traz defaults seguros (modo local-only, store ancorado no harness
+home, sync de 60s). Para sobrescrever, edite o `cordis.patch.yml` **do seu
+profile** — a camada do usuário, aplicada depois de todas as camadas de bundle.
+A sobrescrita é uma **linha direta com o mesmo `id`** (não um segundo `insert:`,
+que duplicaria o id e faria o loader falhar com `duplicate loader entry id`):
 
 ```yaml
 # ~/.dsh/profiles/<perfil>/cordis.patch.yml
-- id: dsh-cost-policy
-  name: '@openplan/dsh-plugin'
+- id: fuse
+  name: '@openplan/dsh-fuse'
   config:
     project: meu-projeto
     dev: eu@empresa.com
@@ -149,8 +149,11 @@ segura o load.
 ## Modo local-only
 
 Sem `baseUrl`/`orgKey` o plugin funciona **sozinho**: nada sobe, o fuse enforça
-os budgets offline. As sessões ficam no libsql local (`file:local.db` por
-padrão; `storeUrl` para trocar).
+os budgets offline. As sessões ficam no libsql local, por padrão em
+`$DSH_HOME/dsh-fuse/local.db` (`~/.dsh/...` quando `DSH_HOME` não está
+definido) — ancorado no harness home, então o ledger não muda conforme o
+diretório de onde o harness foi iniciado. `storeUrl` troca o caminho; um
+caminho relativo só vale quando você o define explicitamente.
 
 ## O que sobe pro painel (sync)
 

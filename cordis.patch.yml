@@ -3,18 +3,18 @@
 # Every key this row needs is restated here because a patch REPLACES a row's
 # config rather than deep-merging it. It deliberately carries no `config:` at
 # all: the exported Config schema supplies the defaults a deployment is likely
-# to keep (local-only mode, `file:local.db`, 60s sync), and users override
-# what they need in their own profile's `cordis.patch.yml`, which is applied
-# after every bundle layer.
+# to keep (local-only mode, harness-home-anchored store, 60s sync), and users
+# override what they need in their own profile's `cordis.patch.yml`, which is
+# applied after every bundle layer.
 #
-#   dsh plugin --profile <name> add @openplan/dsh-plugin
-#   dsh --profile <name> --dump-config   # shows the "# == @openplan/dsh-plugin" layer
+#   dsh plugin --profile <name> add @openplan/dsh-fuse
+#   dsh --profile <name> --dump-config   # shows the "# == @openplan/dsh-fuse" layer
 #
 # Local-only mode (nothing leaves the machine) is the default. To report to a
 # panel, add to the profile patch:
 #
-#   - id: dsh-cost-policy
-#     name: '@openplan/dsh-plugin'
+#   - id: fuse
+#     name: '@openplan/dsh-fuse'
 #     config:
 #       project: meu-projeto
 #       dev: eu@empresa.com
@@ -25,5 +25,5 @@
 #           window: month
 #
 - insert:
-    - id: dsh-cost-policy
-      name: '@openplan/dsh-plugin'
+    - id: fuse
+      name: '@openplan/dsh-fuse'
