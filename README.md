@@ -15,16 +15,19 @@ O pacote declara `dsh.bundle`, que é o que faz `dsh plugin add` ativar a
 camada. Sem essa declaração o pnpm instalaria uma biblioteca inerte.
 
 ```bash
-# npm (assim que publicado)
+# npm — a forma canônica de instalação (publicado, v0.1.0)
 dsh plugin --profile <perfil> add @openplan/dsh-plugin
 
-# tarball (funciona hoje, sem depender de registry)
+# tarball (sem depender de registry)
 pnpm pack                       # gera openplan-dsh-plugin-<versão>.tgz
 dsh plugin --profile <perfil> add ./openplan-dsh-plugin-0.1.0.tgz
 
 # direto do git (exige allowlist de build do pnpm >= 10 — veja a doc do harness)
 dsh plugin --profile <perfil> add github:<org>/<repo>#<sha>
 ```
+
+Fonte: **https://github.com/openplancc/dsh-plugin** (espelho gerado a cada
+release — cada tag `v<versão>` corresponde a um commit deste monorepo).
 
 O plugin usa `@libsql/client` como store local — zero build nativa,
 distribuível sem compilação (Node ≥ 20).
