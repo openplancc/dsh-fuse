@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 /**
  * `dsh plugin connect` — the RFC 8628 device-flow CLI (ADR-0020 default).
  *
@@ -17,6 +18,7 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { saveCredentials } from "./credentials.js";
 
 const DEFAULT_BASE_URL = "https://dsh-api.openplan.cc";
@@ -178,9 +180,23 @@ async function main(argv: string[]): Promise<void> {
 
 // Run only when executed directly (`node dist/connect.js` / the bin entry),
 // never when the module is imported by the plugin or tests.
-const isDirectRun =
-	process.argv[1] !== undefined &&
-	import.meta.url === new URL(`file://${process.argv[1]}`).href;
+//
+// npm installs bins as SYMLINKS into node_modules/.bin/: node's argv[1] is
+// then the symlink path while import.meta.url is the resolved real file, so
+// a naive string compare would silently skip main() — the connect command
+// would exit 0 and do nothing. Reconcile both sides through realpath.
+const isDirectRun = (() => {
+	if (process.argv[1] === undefined) return false;
+	try {
+		return (
+			import.meta.url === new URL(`file://${process.argv[1]}`).href ||
+			import.meta.url ===
+				new URL(`file://${realpathSync(process.argv[1])}`).href
+		);
+	} catch {
+		return false;
+	}
+})();
 if (isDirectRun) {
 	main(process.argv.slice(2)).catch((error: unknown) => {
 		console.error(
