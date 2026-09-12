@@ -281,7 +281,7 @@ describe("fuse — the primary gate", () => {
 		};
 		expect(source.kind).toBe("plugin");
 		expect(source.form).toBe("notice");
-		expect(source.summary).toContain("cortada");
+		expect(source.summary).toContain("cut");
 		// The GUI renders session-log messages; the notice must carry the
 		// surface marker that puts it on the conversation surface.
 		expect(appendOpSpies.get("s1")?.surfaceOp).toBe("append");
@@ -319,7 +319,7 @@ describe("fuse — the primary gate", () => {
 			summary?: string;
 		};
 		expect(source.form).toBe("notice");
-		expect(source.summary).toContain("bloqueadas");
+		expect(source.summary).toContain("blocked");
 		await dispose();
 	});
 
@@ -930,7 +930,7 @@ describe("SaaS target resolution — credentials vs config (ADR-0020)", () => {
 			expect(notices).toHaveLength(1);
 			const source = notices[0]?.source as { form?: string; summary?: string };
 			expect(source.form).toBe("notice");
-			expect(source.summary).toContain("revogada");
+			expect(source.summary).toContain("revoked");
 			expect(appendOpSpies.get("s-revoke")?.surfaceOp).toBe("append");
 
 			// Second step: the notice fires only once.

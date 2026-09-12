@@ -1,6 +1,6 @@
 {
 	"name": "@openplan/dsh-fuse",
-	"version": "0.2.2",
+	"version": "0.2.3",
 	"description": "Cost policy for the DeepSeek Harness: per-call metering plus a local fuse that enforces budget, model and reasoning-effort limits before any token is spent.",
 	"license": "MIT",
 	"type": "module",

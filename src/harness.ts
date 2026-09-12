@@ -54,6 +54,7 @@ import {
 import { assertUsableConfig, type DshPluginConfig } from "./config.js";
 import { clearCredentials, loadCredentials } from "./credentials.js";
 import { type FuseBudget, type FusePolicies, fuseDecision } from "./fuse.js";
+import { format, harnessLocale, noticeStrings } from "./locale.js";
 import { hashSessionId, projectCall } from "./meter.js";
 import {
 	createPricingCache,
@@ -177,6 +178,10 @@ export function apply(ctx: Context, config: DshPluginConfig): void {
 		(ctx.get?.("tokenMeter") as OptionalTokenMeter | undefined) ?? undefined;
 	const llm = (): LlmRuntime | undefined =>
 		(ctx.get?.("llm") as LlmRuntime | undefined) ?? undefined;
+
+	// The notices live in the CONVERSATION, which follows the harness UI
+	// language (zh/en, en fallback) — not the panel's. Read once at boot.
+	const notices = noticeStrings(harnessLocale(ctx));
 
 	/**
 	 * In-session cut notices: when the fuse blocks a step, the harness ends the
@@ -716,9 +721,8 @@ export function apply(ctx: Context, config: DshPluginConfig): void {
 			if (revocationNoticePending) {
 				revocationNoticePending = false;
 				appendSessionNotice(payload.agent, {
-					summary: "fuse: conexão com o painel revogada",
-					detail:
-						"O token do dispositivo foi revogado no painel — este profile voltou a local-only (nada sincroniza, o fuse continua ativo). Reconecte com `dsh plugin --profile <perfil> exec dsh-fuse-connect` quando quiser. As linhas não sincronizadas ficaram retidas.",
+					summary: notices.revokedSummary,
+					detail: notices.revokedDetail,
 				});
 			}
 
@@ -747,8 +751,11 @@ export function apply(ctx: Context, config: DshPluginConfig): void {
 				});
 				notifyCut(payload.agent, {
 					rule: remoteBlock.rule,
-					summary: "fuse: chamadas bloqueadas (orçamento do painel)",
-					detail: `O painel central cortou as chamadas deste escopo (regra: ${remoteBlock.rule}). O bloqueio vale até ${remoteBlock.resetAt} — o fuse local segue ativo e nenhum token é gasto enquanto isso.`,
+					summary: notices.blockSummary,
+					detail: format(notices.blockDetail, {
+						rule: remoteBlock.rule,
+						resetAt: remoteBlock.resetAt,
+					}),
 				});
 				return { kind: "reject" };
 			}
@@ -794,8 +801,10 @@ export function apply(ctx: Context, config: DshPluginConfig): void {
 				});
 				notifyCut(payload.agent, {
 					rule: decision.rule ?? "unknown",
-					summary: "fuse: chamada cortada — orçamento atingido",
-					detail: `O fuse bloqueou a chamada antes de gastar tokens (regra: ${decision.rule ?? "unknown"}). Ajuste o budget em cordis.patch.yml ou use a ferramenta dsh_budget_status para ver o status; o limite reseta no fim da janela.`,
+					summary: notices.cutSummary,
+					detail: format(notices.cutDetail, {
+						rule: decision.rule ?? "unknown",
+					}),
 				});
 				return { kind: "reject" };
 			}
