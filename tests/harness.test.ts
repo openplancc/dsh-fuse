@@ -7,15 +7,19 @@
  * session-keyed cache of headers is not the source of truth.
  */
 
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { Context } from "@deepseek-ai/cordis";
 import type { ToolDefinition, ToolRuntime } from "@deepseek-ai/dsh-tools";
 import { describe, expect, it } from "vitest";
 import { Config, type DshPluginConfig } from "../src/config.js";
+import { loadCredentials } from "../src/credentials.js";
 import { apply } from "../src/harness.js";
 import { createLocalStore } from "../src/store.js";
 import {
 	agentInjectSpies,
+	appendOpSpies,
 	assistantMessageEvent,
 	clearAgentInjectSpies,
 	eventually,
@@ -251,7 +255,7 @@ describe("fuse — the primary gate", () => {
 		await dispose();
 	});
 
-	it("injects an in-session cut notice, deduped per rule and window", async () => {
+	it("appends an in-session cut notice to the session log, deduped per rule and window", async () => {
 		clearAgentInjectSpies();
 		const { ctx, dispose } = await mountPlugin({
 			storeUrl: ":memory:",
@@ -278,10 +282,13 @@ describe("fuse — the primary gate", () => {
 		expect(source.kind).toBe("plugin");
 		expect(source.form).toBe("notice");
 		expect(source.summary).toContain("cortada");
+		// The GUI renders session-log messages; the notice must carry the
+		// surface marker that puts it on the conversation surface.
+		expect(appendOpSpies.get("s1")?.surfaceOp).toBe("append");
 		await dispose();
 	});
 
-	it("injects a notice for a remote (SaaS 429) block", async () => {
+	it("appends a notice for a remote (SaaS 429) block", async () => {
 		clearAgentInjectSpies();
 		const storeUrl = tmpStore("remote-block");
 		// The plugin opens the same file store from config.storeUrl — seed the
@@ -736,5 +743,203 @@ describe("model-facing budget status tool", () => {
 			(await preStep(ctx, { agent: fakeAgent("s-budget-tool") })).kind,
 		).toBe("enter");
 		await dispose();
+	});
+});
+
+describe("SaaS target resolution — credentials vs config (ADR-0020)", () => {
+	it("prefers the device token (bearer) when a credentials file is present", async () => {
+		// A credentials file in the harness home wins over any configured
+		// orgKey: the human-attached identity is the default, the key is the
+		// headless fallback.
+		const home = join(
+			tmpdir(),
+			`dsh-resolve-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+		);
+		mkdirSync(home, { recursive: true });
+		// Write the credentials file directly into the test home (mountPlugin
+		// points DSH_HOME there at mount time — saveCredentials must not run
+		// before that, or it would hit the developer's real home).
+		const credFile = join(home, ".dsh", "dsh-fuse", "credentials.json");
+		mkdirSync(dirname(credFile), { recursive: true });
+		writeFileSync(
+			credFile,
+			JSON.stringify(
+				{
+					baseUrl: "https://saas.example.test",
+					token: "dshd_resolve_token",
+					connectedAt: "2026-09-12T00:00:00.000Z",
+				},
+				null,
+				2,
+			) + "\n",
+			{ mode: 0o600 },
+		);
+
+		const seen: { headers: Headers; url: string }[] = [];
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+			// The pricing-registry refresh (from ANY mounted plugin) may still
+			// be in flight while this test runs. It must RESOLVE (never throw)
+			// so a late write lands harmlessly against an open store — a
+			// throw would surface as an unhandled rejection. Only the sync
+			// batch URL is asserted below.
+			if (!String(url).includes("/v1/usage/batch")) {
+				return new Response("{}", {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				});
+			}
+			seen.push({ headers: new Headers(init?.headers), url: String(url) });
+			return new Response(JSON.stringify({ ok: true, accepted: 1 }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		}) as typeof fetch;
+
+		try {
+			const storeUrl = tmpStore("resolve");
+			const { ctx, dispose } = await mountPlugin(
+				{
+					storeUrl,
+					project: "test",
+					// Key + baseUrl configured as the fallback; the credentials
+					// file must still win.
+					baseUrl: "https://fallback.example.test",
+					orgKey: "dsh_fallback_key",
+					syncIntervalMs: 1000,
+					// No pricing refresh in this test: the batch auth is what's
+					// under test, not pricing.
+					pricingRegistryUrl: "",
+					pricingGatewayUrl: "",
+				},
+				{ home },
+			);
+
+			// A metered call creates a pending row so the sync has something
+			// to send; the interval then fires and must use the bearer token.
+			ctx.emit(
+				"session/event",
+				fakeSession("s-resolve"),
+				requestHeaderEvent({ provider: "p", model: "m" }),
+			);
+			ctx.emit(
+				"session/event",
+				fakeSession("s-resolve"),
+				assistantMessageEvent({
+					provider: "p",
+					model: "m",
+					usage: { inputTokens: 100, outputTokens: 10 },
+				}),
+			);
+			ctx.emit("session/event", fakeSession("s-resolve"), turnEndEvent({}));
+
+			await eventually(
+				() => seen.some((entry) => entry.url.includes("/v1/usage/batch")),
+				"the bearer-authed sync batch",
+			);
+			const batch = seen.find((entry) => entry.url.includes("/v1/usage/batch"));
+			expect(batch?.headers.get("authorization")).toBe(
+				"Bearer dshd_resolve_token",
+			);
+			expect(batch?.headers.get("x-org-key")).toBeNull();
+			await dispose();
+		} finally {
+			globalThis.fetch = originalFetch;
+			rmSync(home, { recursive: true, force: true });
+		}
+	});
+
+	it("announces a device-token revocation to the next session step", async () => {
+		clearAgentInjectSpies();
+		const home = join(
+			tmpdir(),
+			`dsh-revoke-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+		);
+		mkdirSync(home, { recursive: true });
+		const credFile = join(home, ".dsh", "dsh-fuse", "credentials.json");
+		mkdirSync(dirname(credFile), { recursive: true });
+		writeFileSync(
+			credFile,
+			JSON.stringify(
+				{
+					baseUrl: "https://saas.example.test",
+					token: "dshd_revoke_token",
+					connectedAt: "2026-09-12T00:00:00.000Z",
+				},
+				null,
+				2,
+			) + "\n",
+			{ mode: 0o600 },
+		);
+
+		let batchCalls = 0;
+		const originalFetch = globalThis.fetch;
+		// The SaaS revoked the token: the batch answers 401 (nothing else is
+		// fetched — pricing is disabled below, so a throw here cannot race a
+		// store close).
+		globalThis.fetch = (async (url: string | URL) => {
+			if (!String(url).includes("/v1/usage/batch")) {
+				throw new Error("network disabled in this test");
+			}
+			batchCalls += 1;
+			return new Response(JSON.stringify({ error: "unauthorized" }), {
+				status: 401,
+				headers: { "content-type": "application/json" },
+			});
+		}) as typeof fetch;
+
+		try {
+			const storeUrl = tmpStore("revoke");
+			const { ctx, dispose } = await mountPlugin(
+				{
+					storeUrl,
+					project: "test",
+					syncIntervalMs: 1000,
+					pricingRegistryUrl: "",
+					pricingGatewayUrl: "",
+				},
+				{ home },
+			);
+
+			// A metered call creates a pending row; the sync hits the 401 and
+			// clears the credentials, flagging the pending revocation notice.
+			const agent = fakeAgent("s-revoke", { provider: "p", model: "m" });
+			ctx.emit(
+				"session/event",
+				agent.session,
+				requestHeaderEvent({ provider: "p", model: "m" }),
+			);
+			ctx.emit(
+				"session/event",
+				agent.session,
+				assistantMessageEvent({
+					provider: "p",
+					model: "m",
+					usage: { inputTokens: 100, outputTokens: 10 },
+				}),
+			);
+			ctx.emit("session/event", agent.session, turnEndEvent({}));
+
+			await eventually(() => batchCalls > 0, "the 401 sync attempt");
+			expect(loadCredentials()).toBeNull(); // credentials cleared
+
+			// The NEXT pre-step carries the notice — exactly the moment the
+			// user would look at the conversation.
+			await preStep(ctx, { agent, messages: [{ role: "user", content: "x" }] });
+			const notices = agentInjectSpies.get("s-revoke") ?? [];
+			expect(notices).toHaveLength(1);
+			const source = notices[0]?.source as { form?: string; summary?: string };
+			expect(source.form).toBe("notice");
+			expect(source.summary).toContain("revogada");
+			expect(appendOpSpies.get("s-revoke")?.surfaceOp).toBe("append");
+
+			// Second step: the notice fires only once.
+			await preStep(ctx, { agent, messages: [{ role: "user", content: "y" }] });
+			expect(agentInjectSpies.get("s-revoke") ?? []).toHaveLength(1);
+			await dispose();
+		} finally {
+			globalThis.fetch = originalFetch;
+			rmSync(home, { recursive: true, force: true });
+		}
 	});
 });

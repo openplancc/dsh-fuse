@@ -84,9 +84,9 @@ export {
 } from "./store.js";
 export {
 	fetchPolicy,
-	type OrgKeyTarget,
 	parseRemotePolicy,
 	type SyncResult,
+	type SyncTarget,
 	syncBatch,
 } from "./sync.js";
 export type { BatchEvent, CutEvent, UsageEvent } from "./wire.js";

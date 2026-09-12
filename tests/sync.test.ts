@@ -9,7 +9,7 @@ describe("syncBatch — the secondary gate", () => {
 	it("surfaces the SaaS 429 as a block with the rule, and keeps the rows", async () => {
 		const result = await syncBatch({
 			baseUrl: "https://x",
-			orgKey: "k",
+			auth: { kind: "key", orgKey: "k" },
 			events: [],
 			fetchImpl: stubFetch(
 				() =>
@@ -31,7 +31,7 @@ describe("syncBatch — the secondary gate", () => {
 	it("reports a delivered batch on 200", async () => {
 		const result = await syncBatch({
 			baseUrl: "https://x",
-			orgKey: "k",
+			auth: { kind: "key", orgKey: "k" },
 			events: [],
 			fetchImpl: stubFetch(
 				() =>
@@ -47,7 +47,7 @@ describe("syncBatch — the secondary gate", () => {
 	it("does NOT treat a server error as delivered (the rows must survive)", async () => {
 		const result = await syncBatch({
 			baseUrl: "https://x",
-			orgKey: "k",
+			auth: { kind: "key", orgKey: "k" },
 			events: [],
 			fetchImpl: stubFetch(
 				() =>
@@ -65,7 +65,7 @@ describe("syncBatch — the secondary gate", () => {
 	it("does not treat an HTML error page or a network failure as delivered", async () => {
 		const html = await syncBatch({
 			baseUrl: "https://x",
-			orgKey: "k",
+			auth: { kind: "key", orgKey: "k" },
 			events: [],
 			fetchImpl: stubFetch(
 				() => new Response("<html>502</html>", { status: 502 }),
@@ -75,7 +75,7 @@ describe("syncBatch — the secondary gate", () => {
 
 		const offline = await syncBatch({
 			baseUrl: "https://x",
-			orgKey: "k",
+			auth: { kind: "key", orgKey: "k" },
 			events: [],
 			fetchImpl: vi.fn(async () => {
 				throw new Error("ENOTFOUND");
@@ -94,10 +94,28 @@ describe("syncBatch — the secondary gate", () => {
 		});
 		await syncBatch({
 			baseUrl: "https://x",
-			orgKey: "k",
+			auth: { kind: "key", orgKey: "k" },
 			events: [],
 			fetchImpl: impl as unknown as typeof fetch,
 		});
+	});
+
+	it("signs the batch with a Bearer device token (ADR-0020 connect path)", async () => {
+		const impl = vi.fn(async (_url: string | URL, init?: RequestInit) => {
+			expect(new Headers(init?.headers).get("authorization")).toBe(
+				"Bearer dshd_test_token",
+			);
+			return new Response(JSON.stringify({ ok: true, accepted: 0 }), {
+				status: 200,
+			});
+		});
+		const result = await syncBatch({
+			baseUrl: "https://x",
+			auth: { kind: "bearer", token: "dshd_test_token" },
+			events: [],
+			fetchImpl: impl as unknown as typeof fetch,
+		});
+		expect(result.delivered).toBe(true);
 	});
 });
 
@@ -105,7 +123,7 @@ describe("fetchPolicy — the panel as the local fuse's control plane", () => {
 	it("parses a published policy into the fuse's vocabulary", async () => {
 		const result = await fetchPolicy({
 			baseUrl: "https://x",
-			orgKey: "k",
+			auth: { kind: "key", orgKey: "k" },
 			fetchImpl: stubFetch(
 				() =>
 					new Response(
@@ -147,7 +165,7 @@ describe("fetchPolicy — the panel as the local fuse's control plane", () => {
 		});
 		await fetchPolicy({
 			baseUrl: "https://x",
-			orgKey: "k",
+			auth: { kind: "key", orgKey: "k" },
 			fetchImpl: impl as unknown as typeof fetch,
 		});
 	});
@@ -155,7 +173,7 @@ describe("fetchPolicy — the panel as the local fuse's control plane", () => {
 	it("returns an error (not a policy) on an unauthorized key", async () => {
 		const result = await fetchPolicy({
 			baseUrl: "https://x",
-			orgKey: "bad",
+			auth: { kind: "key", orgKey: "bad" },
 			fetchImpl: stubFetch(
 				() => new Response("{}", { status: 401 }),
 			) as unknown as typeof fetch,

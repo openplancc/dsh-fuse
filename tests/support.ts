@@ -16,6 +16,9 @@
  * across the suites.
  */
 
+import { mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Context } from "@deepseek-ai/cordis";
 import type { Agent, PreStepDecision } from "@deepseek-ai/dsh-agent";
 import type { LlmCallConfig } from "@deepseek-ai/dsh-llm";
@@ -81,7 +84,23 @@ export interface MountedPlugin {
 /** Mount the plugin with schema defaults applied, as the loader does. */
 export async function mountPlugin(
 	config: RawPluginConfig = {},
+	options: { home?: string } = {},
 ): Promise<MountedPlugin> {
+	// Isolate the harness home so credential resolution (ADR-0020) never
+	// reads a developer's real ~/.dsh/dsh-fuse/credentials.json during a
+	// test run — a connected machine would otherwise silently enable sync.
+	// A caller-provided `home` lets tests pre-seed the credentials file
+	// before the plugin resolves its sync target at apply().
+	const isolatedHome =
+		options.home ??
+		join(
+			tmpdir(),
+			`dsh-home-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+		);
+	mkdirSync(isolatedHome, { recursive: true });
+	const previousHome = process.env.DSH_HOME;
+	process.env.DSH_HOME = isolatedHome;
+
 	// Cordis validates this against the plugin's exported schema and fills the
 	// defaults; a `cordis.yml` row arrives in exactly this partial shape. The
 	// cast states the boundary (untrusted, partially-populated input) rather
@@ -98,18 +117,35 @@ export async function mountPlugin(
 		ctx,
 		dispose: async () => {
 			await fiber.dispose();
+			if (previousHome === undefined) delete process.env.DSH_HOME;
+			else process.env.DSH_HOME = previousHome;
+			rmSync(isolatedHome, { recursive: true, force: true });
 		},
 	};
 }
 
-/** A minimal session handle — only `.id` is read by the plugin. */
+/** A minimal session handle — only `.id` is read by the plugin (plus, for
+ * cut-notice assertions, an `append` spy that records user/message appends —
+ * the GUI-visible path the plugin now uses, NOT the model inbox). */
 export function fakeSession(id: string): Session {
-	return { id } as unknown as Session;
+	return {
+		id,
+		append: ((type: "user/message", data: unknown, opts?: unknown) => {
+			if (type === "user/message") {
+				const recorded = agentInjectSpies.get(id) ?? [];
+				recorded.push(data as UserMessage);
+				agentInjectSpies.set(id, recorded);
+				appendOpSpies.set(id, opts as { surfaceOp?: unknown });
+			}
+			return data as never;
+		}) as Session["append"],
+	} as unknown as Session;
 }
 
-/** A minimal agent handle — the plugin reads `id`, `options` and `session`.
- * `inject` is spy-shaped: it records each notice so tests can assert the
- * in-session cut alert without running a full conversation. */
+/** The surfaceOp carried by the last user/message append (per agent id). */
+export const appendOpSpies = new Map<string, { surfaceOp?: unknown }>();
+
+/** A minimal agent handle — the plugin reads `id`, `options` and `session`. */
 export function fakeAgent(
 	id: string,
 	options: { provider?: string; model?: string } = {},
@@ -118,25 +154,21 @@ export function fakeAgent(
 		id,
 		options,
 		session: fakeSession(id),
-		inject: (message: UserMessage) => {
-			const recorded = agentInjectSpies.get(id) ?? [];
-			recorded.push(message);
-			agentInjectSpies.set(id, recorded);
-		},
 	} as unknown as Agent;
 }
 
 /**
- * Notices injected into a fake agent, keyed by agent id. Cleared by
- * {@link clearAgentInjectSpies} between cases; the plugin's own in-process
+ * Notices appended to a fake agent's session log, keyed by agent id. Cleared
+ * by {@link clearAgentInjectSpies} between cases; the plugin's own in-process
  * dedup (one notice per rule per window) intentionally survives that clear,
  * so a second blocked step within the same test still produces one notice.
  */
 export const agentInjectSpies = new Map<string, UserMessage[]>();
 
-/** Reset the recorded injections (not the plugin's dedup keys). */
+/** Reset the recorded appends + surface ops (not the plugin's dedup keys). */
 export function clearAgentInjectSpies(): void {
 	agentInjectSpies.clear();
+	appendOpSpies.clear();
 }
 
 /** Drive the `agent/pre-step` waterfall through the real dispatcher. */

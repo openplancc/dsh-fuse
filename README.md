@@ -53,7 +53,9 @@ que duplicaria o id e faria o loader falhar com `duplicate loader entry id`):
   config:
     project: meu-projeto
     dev: eu@empresa.com
-    # Segredo nunca em texto puro no YAML — a tag !!js resolve no load.
+    # Caminho headless/CI (máquinas sem navegador). O padrão para humanos é
+    # `dsh plugin … exec dsh-fuse-connect` (device flow) — ver acima. Segredo
+    # nunca em texto puro no YAML — a tag !!js resolve no load.
     orgKey: !!js process.env.DSH_ORG_KEY
     baseUrl: https://dsh-api.openplan.cc
     # Orçamento local (o fuse corta offline antes de gastar):
@@ -98,6 +100,31 @@ que não enforça nada: metade de um alvo de sync (só `baseUrl` ou só `orgKey`
 ou uma `cascade` que não intersecta `policies.allowedModels` são recusados no
 boot. Preço **não** é exigido — o plugin resolve genericamente (abaixo); um
 modelo sem preço é um estado visível (`unpriced`), não um boot falho.
+
+## Conectar ao painel (device flow — o caminho padrão)
+
+Para humanos atachando uma máquina à sua org, o jeito moderno é o **RFC 8628
+device flow** (o mesmo padrão de `gh auth login`, `wrangler login`, Stripe):
+
+```bash
+dsh plugin --profile <perfil> exec dsh-fuse-connect
+```
+
+O comando imprime uma URL + código, você aprova no navegador (login no painel),
+e o token fica salvo com permissões `0600` em
+`$DSH_HOME/dsh-fuse/credentials.json` — o plugin passa a sincronizar com o
+SaaS **sem colar chave nenhuma**:
+
+- o token é **bound ao usuário** que aprovou (auditoria: quem conectou a
+  máquina) e **revogável** no painel ("Sessões conectadas") — revogação cai no
+  próximo sync (`401` → o plugin volta a local-only e mantém as linhas).
+- escopos mínimos (`usage:write`, `policy:read`) — o que o batch precisa.
+- cabeçalho de autenticação: `Authorization: Bearer <token>` (o `x-org-key`
+  continua aceito para máquinas/CI).
+
+Se o seu fluxo é headless (CI, container, máquina sem navegador), o caminho
+disponível é a **org key** no config (abaixo) — a API aceita os dois; o device
+flow é o padrão para humanos.
 
 ## Como o preço é resolvido
 

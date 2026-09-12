@@ -52,6 +52,7 @@ import {
 	type ScopedBudgetStatus,
 } from "./budget-tool.js";
 import { assertUsableConfig, type DshPluginConfig } from "./config.js";
+import { clearCredentials, loadCredentials } from "./credentials.js";
 import { type FuseBudget, type FusePolicies, fuseDecision } from "./fuse.js";
 import { hashSessionId, projectCall } from "./meter.js";
 import {
@@ -180,14 +181,61 @@ export function apply(ctx: Context, config: DshPluginConfig): void {
 	/**
 	 * In-session cut notices: when the fuse blocks a step, the harness ends the
 	 * turn as `{ kind: "blocked" }` with no visible explanation — the user is
-	 * told nothing. The harness's own convention for "something just happened"
-	 * is a plugin-producer `notice`-form user message (`agent.inject`), which
-	 * the client conversation renders as a collapsed one-line row expandable to
-	 * the full text. One notice per (rule, window) per process: a budget that
-	 * stays tripped must not restate itself on every blocked step, and a new
-	 * window that re-trips it should announce that again.
+	 * told nothing. The harness's convention for "something just happened" is a
+	 * plugin-producer `notice`-form user message on the SESSION LOG (the same
+	 * `session.append("user/message", …, { surfaceOp: "append" })` the agent
+	 * loop itself uses at every message boundary), which the client
+	 * conversation renders as a collapsed one-line row expandable to the full
+	 * text. One notice per (rule, window) per process: a budget that stays
+	 * tripped must not restate itself on every blocked step, and a new window
+	 * that re-trips it should announce that again.
+	 *
+	 * NOT `agent.inject`: that writes into the model's inbox (context for the
+	 * NEXT step — invisible to the GUI), it never touches the session log. A
+	 * turn that ends blocked has no next step, so an injected notice would sit
+	 * in the inbox forever, never rendered. This bug is why the 0.1.1 cut
+	 * alerts were silent in the panel.
 	 */
 	const cutNotices = new Set<string>();
+	/** Set when a bearer 401 revokes the device token mid-sync; the next step
+	 * announces it to the session once (the timer has no agent to address). */
+	let revocationNoticePending = false;
+	/**
+	 * Append a plugin-producer `notice`-form user message to the session log —
+	 * the GUI renders it as a collapsed row. Shared by the fuse cut notice and
+	 * the revocation announcement.
+	 */
+	function appendSessionNotice(
+		agent: Agent,
+		input: { summary: string; detail: string },
+	): void {
+		try {
+			agent.session.append(
+				"user/message",
+				{
+					id: crypto.randomUUID() as MessageId,
+					role: "user",
+					content: [{ type: "text", text: input.detail }],
+					source: {
+						kind: "plugin",
+						plugin: "@openplan/dsh-fuse",
+						form: "notice",
+						summary: input.summary,
+					},
+				} as UserMessage,
+				{ surfaceOp: "append" },
+			);
+		} catch (error) {
+			// A notice must never break the reject/sync path — the underlying
+			// event (cut or revocation) already landed; the UI alert is
+			// best-effort.
+			logger.warn("[dsh] session notice not delivered", {
+				summary: input.summary,
+				error: String(error),
+			});
+		}
+	}
+
 	function notifyCut(
 		agent: Agent,
 		input: { rule: string; summary: string; detail: string },
@@ -196,26 +244,7 @@ export function apply(ctx: Context, config: DshPluginConfig): void {
 		const key = `${input.rule}\u0000${window}`;
 		if (cutNotices.has(key)) return;
 		cutNotices.add(key);
-		try {
-			agent.inject({
-				id: crypto.randomUUID() as MessageId,
-				role: "user",
-				content: [{ type: "text", text: input.detail }],
-				source: {
-					kind: "plugin",
-					plugin: "@openplan/dsh-fuse",
-					form: "notice",
-					summary: input.summary,
-				},
-			} as UserMessage);
-		} catch (error) {
-			// A notice must never break the reject path — the cut already landed
-			// in the store; the UI alert is best-effort.
-			logger.warn("[dsh] cut notice not delivered", {
-				rule: input.rule,
-				error: String(error),
-			});
-		}
+		appendSessionNotice(agent, input);
 	}
 
 	/**
@@ -273,7 +302,10 @@ export function apply(ctx: Context, config: DshPluginConfig): void {
 				override: config.pricingTable,
 			}),
 		3_600_000,
-		(table) => void store.setPricingTable(table),
+		// A refresh can resolve AFTER unload (slow network, test teardown):
+		// persisting a table into a closed store must be a swallowed no-op,
+		// never an unhandled rejection.
+		(table) => void store.setPricingTable(table).catch(() => undefined),
 	);
 	void store.pricingTable().then((persisted) => {
 		if (persisted) pricingCache.hydrate(persisted as PricingTable);
@@ -679,6 +711,17 @@ export function apply(ctx: Context, config: DshPluginConfig): void {
 			},
 			next: () => Promise<PreStepDecision>,
 		): Promise<PreStepDecision> => {
+			// One-time revocation announcement: a device-token 401 during sync
+			// disconnected the SaaS; tell the user on the next step they run.
+			if (revocationNoticePending) {
+				revocationNoticePending = false;
+				appendSessionNotice(payload.agent, {
+					summary: "fuse: conexão com o painel revogada",
+					detail:
+						"O token do dispositivo foi revogado no painel — este profile voltou a local-only (nada sincroniza, o fuse continua ativo). Reconecte com `dsh plugin --profile <perfil> exec dsh-fuse-connect` quando quiser. As linhas não sincronizadas ficaram retidas.",
+				});
+			}
+
 			const agentId = payload.agent.id;
 			const header = headers.get(agentId);
 			const model =
@@ -858,12 +901,30 @@ export function apply(ctx: Context, config: DshPluginConfig): void {
 	);
 
 	// ── SaaS sync + policy pull, released by ctx.effect on unload ──────────
+	// Target resolution (ADR-0020): the device token from `dsh plugin connect`
+	// (credentials file) wins — it is the human-attached identity; the
+	// configured orgKey/baseUrl pair stays the headless/CI path. Local-only
+	// mode (neither) still owns the store.
+	const resolvedTarget = (() => {
+		const connected = loadCredentials();
+		if (connected) {
+			return {
+				baseUrl: connected.baseUrl,
+				auth: { kind: "bearer" as const, token: connected.token },
+			};
+		}
+		if (config.baseUrl && config.orgKey) {
+			return {
+				baseUrl: config.baseUrl,
+				auth: { kind: "key" as const, orgKey: config.orgKey },
+			};
+		}
+		return null;
+	})();
+
 	ctx.effect(() => {
-		if (!config.baseUrl || !config.orgKey) return () => undefined;
-		const target = {
-			baseUrl: config.baseUrl,
-			orgKey: config.orgKey,
-		};
+		if (!resolvedTarget) return () => undefined;
+		const target = resolvedTarget;
 		let syncing = false;
 		let refreshing = false;
 		let lastPolicyAt = 0;
@@ -922,6 +983,22 @@ export function apply(ctx: Context, config: DshPluginConfig): void {
 				}
 				if (!result.delivered) {
 					// Keep the rows: a failed batch is not a delivered batch.
+					// A 401 on the BEARER path means the device token was
+					// revoked at the SaaS — drop the credentials and stop
+					// advertising a connected machine (the fuse keeps running
+					// local-only; rows are retained for a future reconnect).
+					if (result.status === 401 && target.auth.kind === "bearer") {
+						logger.warn(
+							"[dsh] device token revoked — disconnecting local sync (rows retained)",
+							{ status: result.status },
+						);
+						clearCredentials();
+						// The sync timer has no agent to address; surface the
+						// revocation on the NEXT step the user runs, once (the
+						// visible counterpart to the fuse cut notice).
+						revocationNoticePending = true;
+						return;
+					}
 					logger.warn("[dsh] sync failed — rows retained for retry", {
 						status: result.status,
 						error: result.error,
@@ -982,7 +1059,7 @@ export function apply(ctx: Context, config: DshPluginConfig): void {
 	});
 
 	// Local-only mode still owns the store; release it on unload.
-	if (!config.baseUrl || !config.orgKey) {
+	if (!resolvedTarget) {
 		ctx.effect(
 			() => async () => {
 				await flushMeter();

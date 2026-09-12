@@ -40,19 +40,25 @@ export interface SyncResult {
 	error?: string;
 }
 
-/** Shared request shape for the two key-authed endpoints. */
-export interface OrgKeyTarget {
+/** Who the machine claims to be on the wire (ADR-0020). */
+export type MachineAuth =
+	| { kind: "key"; orgKey: string }
+	| { kind: "bearer"; token: string };
+
+/** Shared request shape for the two machine-authed endpoints. */
+export interface SyncTarget {
 	baseUrl: string;
-	orgKey: string;
+	auth: MachineAuth;
 	fetchImpl?: typeof fetch;
 }
 
-function keyHeaders(orgKey: string): Record<string, string> {
-	return { "x-org-key": orgKey };
+function authHeaders(auth: MachineAuth): Record<string, string> {
+	if (auth.kind === "key") return { "x-org-key": auth.orgKey };
+	return { authorization: `Bearer ${auth.token}` };
 }
 
 export async function syncBatch(
-	input: OrgKeyTarget & { events: BatchEvent[] },
+	input: SyncTarget & { events: BatchEvent[] },
 ): Promise<SyncResult> {
 	const fetchImpl = input.fetchImpl ?? fetch;
 	let res: Response;
@@ -61,7 +67,7 @@ export async function syncBatch(
 			method: "POST",
 			headers: {
 				"content-type": "application/json",
-				...keyHeaders(input.orgKey),
+				...authHeaders(input.auth),
 			},
 			body: JSON.stringify({ events: input.events }),
 		});
@@ -130,13 +136,13 @@ export async function syncBatch(
  * enforcement never depends on the network being up at boot).
  */
 export async function fetchPolicy(
-	input: OrgKeyTarget,
+	input: SyncTarget,
 ): Promise<{ policy: RemotePolicy | null; error?: string }> {
 	const fetchImpl = input.fetchImpl ?? fetch;
 	try {
 		const res = await fetchImpl(`${input.baseUrl}/v1/policy`, {
 			method: "GET",
-			headers: keyHeaders(input.orgKey),
+			headers: authHeaders(input.auth),
 		});
 		if (res.status === 401) return { policy: null, error: "unauthorized" };
 		if (!res.ok) return { policy: null, error: `status ${res.status}` };
